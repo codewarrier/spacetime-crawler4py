@@ -2,11 +2,12 @@ import re
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from matplotlib import text
+from collections import Counter
 
 PAGES = set()
 MAX_WORDS = 0
 LONGEST_PAGE = ""
-COUNTS = {}
+COUNTS = Counter()
 SUBDOMAINS = {}
 STOPWORDS  = set([
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", 
@@ -31,6 +32,18 @@ STOPWORDS  = set([
     "you'll", "you're", "you've", "your", "yours", "yourself", "yourselves"
 ])
 
+INVALID_EXTENSIONS = {
+    'css', 'js', 'bmp', 'gif', 'jpeg', 'jpg', 'ico', 'png', 'tiff', 'mid', 
+    'mp2', 'mp3', 'mp4', 'wav', 'avi', 'mov', 'mpeg', 'ram', 'm4v', 'mkv', 
+    'ogg', 'ogv', 'pdf', 'ps', 'eps', 'tex', 'ppt', 'pptx', 'doc', 'docx', 
+    'xls', 'xlsx', 'names', 'data', 'dat', 'exe', 'bz2', 'tar', 'msi', 'bin', 
+    '7z', 'psd', 'dmg', 'iso', 'epub', 'dll', 'cnf', 'tgz', 'sha1', 'thmx', 
+    'mso', 'arff', 'rtf', 'jar', 'csv', 'rm', 'smil', 'wmv', 'swf', 'wma', 
+    'zip', 'rar', 'gz'
+}
+
+EXT_PATTERN = re.compile(r".*\.(" + "|".join(INVALID_EXTENSIONS) + r")$", re.IGNORECASE)
+
 def scraper(url, resp):
     links = extract_next_links(url, resp) 
     return [link for link in links if is_valid(link)]   #is this a zelda reference
@@ -45,7 +58,7 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-        
+    
 
     global PAGES
     global MAX_WORDS
@@ -57,46 +70,58 @@ def extract_next_links(url, resp):
     if resp.status != 200 or resp.raw_response is None:
         print(f"Error fetching {url}: {resp.error}")
         return links            # needs to be changed here
-
-    beautiful_soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
+    
+    try:
+        beautiful_soup = BeautifulSoup(resp.raw_response.content, 'lxml')
+    except Exception as e:
+        print(f"Error parsing {url}: {e}")
+        return links
 
     for anchor in beautiful_soup.find_all('a', href = True): # anchor is the hyperlink tag
         href = anchor['href'] # the attribute of anchor that has the actual link
         full_url = urljoin(url, href).split('#')[0] # this makes the partial links like /page into full links
-        links.append(full_url)
+        
+        if is_valid(full_url):
+            links.append(full_url)
     
     for tag in beautiful_soup(['script', 'style']):
         tag.decompose()
     paras = list(beautiful_soup.stripped_strings)
 
+
+
     
     # Q1
     PAGES.add(url)
 
+
     # Q2
     word_count = sum(len(p.split()) for p in paras)
     if word_count > MAX_WORDS:
-        MAX_WORDS = word_count
-        LONGEST_PAGE = url.split('#')[0]
+        globals()['MAX_WORDS'] = word_count
+        globals()['LONGEST_PAGE'] = url.split('#')[0]
 
 
     # Q3
-    text = " ".join(paras)
-    tokens = re.findall(r"[a-z][a-z']*", text.lower())  # why we are using regex: to get lowercase letters only
+    page_text = " ".join(paras)
+    tokens = []
+    rawWords = re.findall(r"[a-z][a-z']*", page_text.lower())  # why we are using regex: to get lowercase letters only
     # without this, "hello,", "hello.", and "hello" become three different keys for ex
-    for word in tokens:
+    for word in rawWords:
         if word not in STOPWORDS and len(word) > 1:
-            COUNTS[word] = COUNTS.get(word, 0) + 1
-    
+            tokens.append(word)
+    COUNTS.update(tokens)
+
+
     #Q4
     host = urlparse(url).hostname or ""
-    if host.endswith(".uci.edu") or host == "uci.edu":
-        if host not in SUBDOMAINS:
+    if host.endswith(".uci.edu"):
+        if host not in SUBDOMAINS and len(SUBDOMAINS[host] >= )
             SUBDOMAINS[host] = set()
             
             
         SUBDOMAINS[host].add(url.split('#')[0])
-
+    
     return links
     
 def is_valid(url):
@@ -107,16 +132,20 @@ def is_valid(url):
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
             return False
-        return not re.match(
-            r".*\.(css|js|bmp|gif|jpe?g|ico"
-            + r"|png|tiff?|mid|mp2|mp3|mp4"
-            + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
-            + r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
-            + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
-            + r"|epub|dll|cnf|tgz|sha1"
-            + r"|thmx|mso|arff|rtf|jar|csv"
-            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+       
+        host = parsed.hostname or ""
+        if host in SUBDOMAINS and len(SUBDOMAINS[host]) > 1000:
+            return False
+    
+        query_lower = parsed.query.lower()
+        if any(action in query_lower for action in ["do=", "rev=", "action=", "sectok="]):
+            return False
 
+        target_path = parsed.path.lower()
+        if EXT_PATTERN.match(target_path):
+            return False
+
+        return True
     except TypeError:
         print ("TypeError for ", parsed)
         raise
