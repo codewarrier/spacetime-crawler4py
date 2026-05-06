@@ -1,6 +1,6 @@
 import hashlib
 import re
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, parse_qs
 from bs4 import BeautifulSoup
 from collections import Counter, defaultdict
 
@@ -96,11 +96,9 @@ def exact_duplicate(resp):
 def update_longest_page(url, len):
     global LONGEST_PAGE_LEN
     global LONGEST_PAGE
-    global MAX_WORDS
     if len > LONGEST_PAGE_LEN:
         LONGEST_PAGE_LEN = len
         LONGEST_PAGE = url
-        MAX_WORDS = len
 
 def update_common_words(token_list):
     for token in token_list:
@@ -150,7 +148,6 @@ def extract_next_links(url, resp):
     
     VISITED_URLS.add(url)
 
-    global MAX_WORDS
     global LONGEST_PAGE
     global SUBDOMAINS
 
@@ -207,6 +204,9 @@ def is_valid(url):
         if any(action in query for action in ["do=", "rev=", "action=", "sectok="]):
             return False
 
+        if is_calendar_trap(parsed):
+            return False
+
         if re.match(r"^.*?(/.+?/).*?\1.*$|^.*?/(.+?/)\2.*$", path):
             return False
 
@@ -222,6 +222,38 @@ def is_valid(url):
     except TypeError:
         print ("TypeError for ", parsed)
         raise
+
+
+def is_calendar_trap(parsed):
+    path = parsed.path.lower()
+    query = parsed.query.lower()
+
+    # Common calendar/event paths can generate unbounded monthly/day views.
+    if "/events/" in path or "/calendar/" in path:
+        return True
+
+    # Date-shaped paths such as /2026/05/06/ often indicate archive/calendar traversal.
+    if re.search(r"/(19|20)\d{2}/\d{1,2}(/\d{1,2})?(/|$)", path):
+        return True
+
+    params = parse_qs(parsed.query)
+    calendar_keys = {
+        "year", "month", "day", "date", "time", "calendar",
+        "startdate", "enddate", "start", "end", "view", "m", "y"
+    }
+
+    # Multiple calendar-ish parameters together are a strong trap signal.
+    matched_keys = sum(1 for key in params if key.lower() in calendar_keys)
+    if matched_keys >= 2:
+        return True
+
+    # Date values in query parameters are another common trap pattern.
+    for values in params.values():
+        for value in values:
+            if re.search(r"(19|20)\d{2}[-/]\d{1,2}([-/]\d{1,2})?", value):
+                return True
+
+    return False
 
 def print_report():
 
