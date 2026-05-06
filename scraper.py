@@ -2,7 +2,6 @@ import hashlib
 import re
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
-from matplotlib import text
 from collections import Counter, defaultdict
 
 
@@ -13,11 +12,9 @@ LONGEST_PAGE = ""
 COMMON_WORDS = defaultdict(int)
 BLACKLISTED_URLS = set()
 VISITED_URLS = set()
-MAX_WORDS = 0
 
 PREVIOUSLY_SEEN_CONTENT_HASHES = set()
 
-COUNTS = Counter()
 PAGES = set()
 SUBDOMAINS = {}
 
@@ -155,7 +152,6 @@ def extract_next_links(url, resp):
     global PAGES
     global MAX_WORDS
     global LONGEST_PAGE
-    global COUNTS
     global SUBDOMAINS
 
 
@@ -199,12 +195,8 @@ def is_valid(url):
         path = parsed.path
         query = parsed.query
 
-        # For the original ICS/UCI crawler, this would be:
         allowed_domains = (".ics.uci.edu", ".cs.uci.edu", ".informatics.uci.edu", ".stat.uci.edu")
         if not any(domain in netloc for domain in allowed_domains):
-            return False
-
-        if "goodreads" in netloc:
             return False
 
         
