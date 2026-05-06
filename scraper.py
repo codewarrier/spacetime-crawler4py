@@ -34,7 +34,7 @@ STOPWORDS  = set([
 
 INVALID_EXTENSIONS = {
     'css', 'js', 'bmp', 'gif', 'jpeg', 'jpg', 'ico', 'png', 'tiff', 'mid', 
-    'mp2', 'mp3', 'mp4', 'wav', 'avi', 'mov', 'mpeg', 'ram', 'm4v', 'mkv', 
+    'mp2', 'mp3', 'mp4', 'wav', 'avi', 'mov', 'mpg', 'mpeg', 'ram', 'm4v', 'mkv', 
     'ogg', 'ogv', 'pdf', 'ps', 'eps', 'tex', 'ppt', 'pptx', 'doc', 'docx', 
     'xls', 'xlsx', 'names', 'data', 'dat', 'exe', 'bz2', 'tar', 'msi', 'bin', 
     '7z', 'psd', 'dmg', 'iso', 'epub', 'dll', 'cnf', 'tgz', 'sha1', 'thmx', 
@@ -143,6 +143,9 @@ def is_valid(url):
 
         target_path = parsed.path.lower()
         if EXT_PATTERN.match(target_path):
+            return False
+
+        if ["wics", "ngs", "gitlab", "grape", "doku", "calendar", "event"] in host:
             return False
 
         return True
