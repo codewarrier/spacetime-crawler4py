@@ -1,14 +1,27 @@
+import hashlib
 import re
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from matplotlib import text
-from collections import Counter
+from collections import Counter, defaultdict
 
-PAGES = set()
-MAX_WORDS = 0
+
+
+
+LONGEST_PAGE_LEN = -1
 LONGEST_PAGE = ""
+COMMON_WORDS = defaultdict(int)
+BLACKLISTED_URLS = set()
+VISITED_URLS = set()
+MAX_WORDS = 0
+
+PREVIOUSLY_SEEN_CONTENT_HASHES = set()
+
 COUNTS = Counter()
+PAGES = set()
 SUBDOMAINS = {}
+
+
 STOPWORDS  = set([
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", 
     "any", "are", "aren't", "as", "at", "be", "because", "been", "before", 
@@ -32,21 +45,93 @@ STOPWORDS  = set([
     "you'll", "you're", "you've", "your", "yours", "yourself", "yourselves"
 ])
 
-INVALID_EXTENSIONS = {
-    'css', 'js', 'bmp', 'gif', 'jpeg', 'jpg', 'ico', 'png', 'tiff', 'mid', 
-    'mp2', 'mp3', 'mp4', 'wav', 'avi', 'mov', 'mpg', 'mpeg', 'ram', 'm4v', 'mkv', 
-    'ogg', 'ogv', 'pdf', 'ps', 'eps', 'tex', 'ppt', 'pptx', 'doc', 'docx', 
-    'xls', 'xlsx', 'names', 'data', 'dat', 'exe', 'bz2', 'tar', 'msi', 'bin', 
-    '7z', 'psd', 'dmg', 'iso', 'epub', 'dll', 'cnf', 'tgz', 'sha1', 'thmx', 
-    'mso', 'arff', 'rtf', 'jar', 'csv', 'rm', 'smil', 'wmv', 'swf', 'wma', 
-    'zip', 'rar', 'gz'
-}
 
-EXT_PATTERN = re.compile(r".*\.(" + "|".join(INVALID_EXTENSIONS) + r")$", re.IGNORECASE)
 
 def scraper(url, resp):
-    links = extract_next_links(url, resp) 
-    return [link for link in links if is_valid(link)]   #is this a zelda reference
+
+    if resp.status != 200:
+        BLACKLISTED_URLS.add(url)
+        return []
+
+    if resp.status == 200:
+        if url in BLACKLISTED_URLS:
+            return []
+        elif exact_duplicate(resp):
+            BLACKLISTED_URLS.add(url)
+            return []
+
+    if resp.status == 200:
+        token_list = tokenize(resp)
+        PAGES.add(url)
+        update_longest_page(url, len(token_list))
+        update_common_words(token_list)
+        print_report()
+        
+    
+    links = extract_next_links(url, resp)
+    return [link for link in links if is_valid(link)]
+
+
+def exact_duplicate(resp):
+    try:
+        soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
+
+        for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
+            tag.decompose()
+
+        text = soup.get_text()
+        
+        text = ' '.join(text.split())
+
+        content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        
+        if content_hash in PREVIOUSLY_SEEN_CONTENT_HASHES:
+            return True
+        else:
+            PREVIOUSLY_SEEN_CONTENT_HASHES.add(content_hash)
+            return False
+
+    except Exception as e:
+        print(f"Error when checking duplicate: {e}" )
+        return False
+
+def update_longest_page(url, len):
+    global LONGEST_PAGE_LEN
+    global LONGEST_PAGE
+    global MAX_WORDS
+    if len > LONGEST_PAGE_LEN:
+        LONGEST_PAGE_LEN = len
+        LONGEST_PAGE = url
+        MAX_WORDS = len
+
+def update_common_words(token_list):
+    for token in token_list:
+        if token not in STOPWORDS:
+            COMMON_WORDS[token] += 1
+
+
+def tokenize(resp):
+    try:
+        bs_parser = BeautifulSoup(resp.raw_response.content, features='html.parser')
+        tokens = []
+
+        currWord = ""
+        for char in bs_parser.get_text():
+            if char.isalnum() and char.isascii():
+                currWord += char
+            else:
+                if currWord:
+                    tokens.append(currWord.lower())
+                currWord = ""
+        if currWord:
+            tokens.append(currWord.lower())
+
+        return tokens
+    except AttributeError:
+        return []
+    
+
+
 
 def extract_next_links(url, resp):
     # Implementation required.
@@ -59,6 +144,13 @@ def extract_next_links(url, resp):
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
     
+    global VISITED_URLS
+
+    links = []
+    if url in VISITED_URLS:
+        return links
+    
+    VISITED_URLS.add(url)
 
     global PAGES
     global MAX_WORDS
@@ -66,16 +158,25 @@ def extract_next_links(url, resp):
     global COUNTS
     global SUBDOMAINS
 
-    links = list()
-    if resp.status != 200 or resp.raw_response is None:
-        print(f"Error fetching {url}: {resp.error}")
-        return links            # needs to be changed here
-    
+
+    parsed = urlparse(url)
+    path = parsed.path 
+    host = parsed.hostname or ""
+
+    if host not in SUBDOMAINS:
+        SUBDOMAINS[host] = set()
+    SUBDOMAINS[host].add(url.split("#")[0])
+
+    if "/files/" in path or "/sampledata/" in path:
+        BLACKLISTED_URLS.add(url)
+        return []
+
     try:
-        beautiful_soup = BeautifulSoup(resp.raw_response.content, 'lxml')
+        beautiful_soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
     except Exception as e:
         print(f"Error parsing {url}: {e}")
         return links
+
 
     for anchor in beautiful_soup.find_all('a', href = True): # anchor is the hyperlink tag
         href = anchor['href'] # the attribute of anchor that has the actual link
@@ -83,45 +184,8 @@ def extract_next_links(url, resp):
         
         if is_valid(full_url):
             links.append(full_url)
-    
-    for tag in beautiful_soup(['script', 'style']):
-        tag.decompose()
-    paras = list(beautiful_soup.stripped_strings)
 
 
-
-    
-    # Q1
-    PAGES.add(url)
-
-
-    # Q2
-    word_count = sum(len(p.split()) for p in paras)
-    if word_count > MAX_WORDS:
-        globals()['MAX_WORDS'] = word_count
-        globals()['LONGEST_PAGE'] = url.split('#')[0]
-
-
-    # Q3
-    page_text = " ".join(paras)
-    tokens = []
-    rawWords = re.findall(r"[a-z][a-z']*", page_text.lower())  # why we are using regex: to get lowercase letters only
-    # without this, "hello,", "hello.", and "hello" become three different keys for ex
-    for word in rawWords:
-        if word not in STOPWORDS and len(word) > 1:
-            tokens.append(word)
-    COUNTS.update(tokens)
-
-
-    #Q4
-    host = urlparse(url).hostname or ""
-    if host.endswith(".uci.edu"):
-        if host not in SUBDOMAINS and len(SUBDOMAINS[host] >= )
-            SUBDOMAINS[host] = set()
-            
-            
-        SUBDOMAINS[host].add(url.split('#')[0])
-    
     return links
     
 def is_valid(url):
@@ -129,38 +193,52 @@ def is_valid(url):
     # If you decide to crawl it, return True; otherwise return False.
     # There are already some conditions that return False.
     try:
+
         parsed = urlparse(url)
+        netloc = parsed.netloc
+        path = parsed.path
+        query = parsed.query
+
+        # For the original ICS/UCI crawler, this would be:
+        allowed_domains = (".ics.uci.edu", ".cs.uci.edu", ".informatics.uci.edu", ".stat.uci.edu")
+        if not any(domain in netloc for domain in allowed_domains):
+            return False
+
+        if "goodreads" in netloc:
+            return False
+
+        
         if parsed.scheme not in set(["http", "https"]):
             return False
-       
-        host = parsed.hostname or ""
-        if host in SUBDOMAINS and len(SUBDOMAINS[host]) > 1000:
-            return False
-    
-        query_lower = parsed.query.lower()
-        if any(action in query_lower for action in ["do=", "rev=", "action=", "sectok="]):
+
+        
+        if any(action in query for action in ["do=", "rev=", "action=", "sectok="]):
             return False
 
-        target_path = parsed.path.lower()
-        if EXT_PATTERN.match(target_path):
+        if re.match(r"^.*?(/.+?/).*?\1.*$|^.*?/(.+?/)\2.*$", path):
             return False
 
-        if ["wics", "ngs", "gitlab", "grape", "doku", "calendar", "event"] in host:
-            return False
-
-        return True
+        return not re.match(
+            r".*\.(css|js|bmp|gif|jpe?g|ico"
+            + r"|png|tiff?|mid|mp2|mp3|mp4"
+            + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
+            + r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
+            + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
+            + r"|epub|dll|cnf|tgz|sha1"
+            + r"|thmx|mso|arff|rtf|jar|csv"
+            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
     except TypeError:
         print ("TypeError for ", parsed)
         raise
 
-def report():
+def print_report():
 
     print(f"unique pgs {len(PAGES)}")
 
-    print(f"longest pg {LONGEST_PAGE} with {MAX_WORDS} words")
+    print(f"longest pg {LONGEST_PAGE} with {LONGEST_PAGE_LEN} words")
     
     print("common 50 words")
-    for word, count in sorted(COUNTS.items(), key=lambda item: item[1], reverse=True)[:50]:
+    for word, count in sorted(COMMON_WORDS.items(), key=lambda item: item[1], reverse=True)[:50]:
         print(f"{word}: {count}")
         
     print("subdomains and their pg cts")
