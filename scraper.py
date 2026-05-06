@@ -15,7 +15,7 @@ VISITED_URLS = set()
 
 PREVIOUSLY_SEEN_CONTENT_HASHES = set()
 
-PAGES = set()
+PAGES = 0
 SUBDOMAINS = {}
 
 
@@ -45,6 +45,7 @@ STOPWORDS  = set([
 
 
 def scraper(url, resp):
+    global PAGES
 
     if resp.status != 200:
         BLACKLISTED_URLS.add(url)
@@ -59,7 +60,7 @@ def scraper(url, resp):
 
     if resp.status == 200:
         token_list = tokenize(resp)
-        PAGES.add(url)
+        PAGES += 1
         update_longest_page(url, len(token_list))
         update_common_words(token_list)
         print_report()
@@ -149,7 +150,6 @@ def extract_next_links(url, resp):
     
     VISITED_URLS.add(url)
 
-    global PAGES
     global MAX_WORDS
     global LONGEST_PAGE
     global SUBDOMAINS
@@ -225,7 +225,7 @@ def is_valid(url):
 
 def print_report():
 
-    print(f"unique pgs {len(PAGES)}")
+    print(f"unique pgs {PAGES}")
 
     print(f"longest pg {LONGEST_PAGE} with {LONGEST_PAGE_LEN} words")
     
