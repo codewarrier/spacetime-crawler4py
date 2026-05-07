@@ -61,7 +61,7 @@ MAX_PATH_SEGMENTS = 8
 MAX_QUERY_PARAMS = 6
 MAX_SEGMENT_LENGTH = 80
 MAX_QUERY_PAGE = 20
-MAX_PAGE_BYTES = 8 * 1024 * 1024
+MAX_PAGE_BYTES = 5 * 1024 * 1024
 MIN_INFO_TOKENS = 60
 MIN_UNIQUE_INFO_TOKENS = 20
 MAX_PAGE_TOKENS = 50000
@@ -81,14 +81,14 @@ DISALLOWED_EXT = re.compile(
 
 # Query keys that typically generate trap variants (sort/filter/session/wiki actions/etc.).
 TRAP_QUERY_KEYS = {
-    "do", "rev", "action", "sectok",          # DokuWiki
-    "share", "replytocom", "redirect", "redirect_to", "s",   # WordPress/search
-    "tab", "sort", "order", "filter", "view",  # generic faceted nav
-    "ical", "outlook-ical", "eventdisplay",    # calendar exports
-    "tribe-bar-date", "tribe_event_display", "tribe_events",  # The Events Calendar
+    "do", "rev", "action", "sectok",
+    "share", "replytocom", "redirect", "redirect_to", "s",
+    "tab", "sort", "order", "filter", "view",
+    "ical", "outlook-ical", "eventdisplay",
+    "tribe-bar-date", "tribe_event_display", "tribe_events",
     "format", "print", "version",
     "session", "sid", "phpsessid",
-    "image", "media", "idx", "ns",             # DokuWiki media browsers
+    "image", "media", "idx", "ns",
     "add-to-cart", "afg",
 }
 
@@ -96,7 +96,7 @@ TRAP_QUERY_KEYS = {
 TRAP_PATH_FRAGMENTS = (
     "/files/", "/sampledata/",
     "/raw/", "/diff/", "/blame/",
-    "/commit/", "/commits/", "/tree/", "/blob/",   # Git web UIs
+    "/commit/", "/commits/", "/tree/", "/blob/",
     "/attachment/", "/attachments/",
     "/login", "/logout", "/signin", "/signout",
     "/wp-login", "/wp-admin",
@@ -310,7 +310,7 @@ def extract_next_links(url, resp):
         return links
 
 
-    for anchor in beautiful_soup.find_all('a', href = True): # anchor is the hyperlink tag
+    for anchor in beautiful_soup.find_all('a', href = True):
         href = anchor.get('href')
         if not href:
             continue
@@ -367,12 +367,10 @@ def is_valid(url):
             if value.isdigit() and int(value) > MAX_QUERY_PAGE:
                 return False
 
-    # Trap path fragments.
     path_lower = parsed.path.lower()
     if any(frag in path_lower for frag in TRAP_PATH_FRAGMENTS):
         return False
 
-    # Structural traps.
     if has_repeated_segments(parsed.path):
         return False
     if is_calendar_trap(parsed):
@@ -383,11 +381,9 @@ def is_valid(url):
     if m and int(m.group(1)) > 20:
         return False
 
-    # Already visited.
     if url in VISITED_URLS:
         return False
 
-    # File-extension blacklist.
     if DISALLOWED_EXT.match(path_lower):
         return False
 
@@ -401,7 +397,6 @@ def is_calendar_trap(parsed):
     if "/events/" in path or "/calendar/" in path:
         return True
 
-    # Date-shaped paths such as /2026/05/06/ often indicate archive/calendar traversal.
     if re.search(r"/(19|20)\d{2}/\d{1,2}(/\d{1,2})?(/|$)", path):
         return True
 
