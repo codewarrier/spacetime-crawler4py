@@ -47,7 +47,24 @@ BLOCKED_HOSTS = {
     "wics.ics.uci.edu",
     "ngs.ics.uci.edu",
     "seal.ics.uci.edu",
+    "grape.ics.uci.edu",
+    "gitlab.ics.uci.edu",
+    "fano.ics.uci.edu",
 }
+
+BLOCKED_HOST_SUFFIXES = (
+    ".ngs.ics.uci.edu",
+)
+
+MAX_URL_LENGTH = 250
+MAX_PATH_SEGMENTS = 8
+MAX_QUERY_PARAMS = 6
+MAX_SEGMENT_LENGTH = 80
+MAX_QUERY_PAGE = 20
+MAX_PAGE_BYTES = 8 * 1024 * 1024
+MIN_INFO_TOKENS = 60
+MIN_UNIQUE_INFO_TOKENS = 20
+MAX_PAGE_TOKENS = 50000
 
 # File extensions we never want to fetch.
 DISALLOWED_EXT = re.compile(
@@ -65,9 +82,10 @@ DISALLOWED_EXT = re.compile(
 # Query keys that typically generate trap variants (sort/filter/session/wiki actions/etc.).
 TRAP_QUERY_KEYS = {
     "do", "rev", "action", "sectok",          # DokuWiki
-    "share", "replytocom", "redirect_to",      # WordPress
+    "share", "replytocom", "redirect", "redirect_to", "s",   # WordPress/search
     "tab", "sort", "order", "filter", "view",  # generic faceted nav
     "ical", "outlook-ical", "eventdisplay",    # calendar exports
+    "tribe-bar-date", "tribe_event_display", "tribe_events",  # The Events Calendar
     "format", "print", "version",
     "session", "sid", "phpsessid",
     "image", "media", "idx", "ns",             # DokuWiki media browsers
@@ -84,13 +102,22 @@ TRAP_PATH_FRAGMENTS = (
     "/wp-login", "/wp-admin",
     "/feed/", "/rss/", "/atom/",
     "/trackback/", "/cgi-bin/",
+    "/~eppstein/pix",
+    "/ca/rules/",
 )
 
 
 def in_scope(netloc):
     """Return True if netloc is exactly an allowed domain or a subdomain of one."""
-    netloc = netloc.lower().split(":")[0]  # strip port if present
-    return any(netloc == d or netloc.endswith("." + d) for d in ALLOWED_DOMAINS)
+    host = netloc.lower().split(":")[0]  # strip port if present
+    return any(host == domain or host.endswith("." + domain) for domain in ALLOWED_DOMAINS)
+
+
+def is_blocked_host(host):
+    host = host.lower().split(":")[0]
+    if host in BLOCKED_HOSTS:
+        return True
+    return any(host.endswith(suffix) for suffix in BLOCKED_HOST_SUFFIXES)
 
 
 def has_repeated_segments(path):
@@ -98,8 +125,19 @@ def has_repeated_segments(path):
     segs = [s for s in path.split("/") if s]
     if not segs:
         return False
+
     counts = Counter(segs)
-    return any(c >= 3 for c in counts.values())
+    if any(c >= 3 for c in counts.values()):
+        return True
+
+    n = len(segs)
+    for window in range(1, (n // 3) + 1):
+        for start in range(0, n - (3 * window) + 1):
+            pattern = segs[start:start + window]
+            if pattern == segs[start + window:start + (2 * window)] == segs[start + (2 * window):start + (3 * window)]:
+                return True
+
+    return False
 
 
 
@@ -107,6 +145,15 @@ def scraper(url, resp):
     global PAGES
 
     if resp.status != 200:
+        BLACKLISTED_URLS.add(url)
+        return []
+
+    raw = getattr(resp, "raw_response", None)
+    content = getattr(raw, "content", b"") or b""
+    if len(content) > MAX_PAGE_BYTES:
+        BLACKLISTED_URLS.add(url)
+        return []
+    if not is_html_like_response(raw):
         BLACKLISTED_URLS.add(url)
         return []
 
@@ -119,6 +166,9 @@ def scraper(url, resp):
 
     if resp.status == 200:
         token_list = tokenize(resp)
+        if not has_informative_content(token_list):
+            BLACKLISTED_URLS.add(url)
+            return []
         PAGES += 1
         update_longest_page(url, len(token_list))
         update_common_words(token_list)
@@ -163,6 +213,37 @@ def update_common_words(token_list):
     for token in token_list:
         if len(token) > 2 and token not in STOPWORDS:
             COMMON_WORDS[token] += 1
+
+
+def has_informative_content(token_list):
+    if len(token_list) < MIN_INFO_TOKENS:
+        return False
+    if len(token_list) > MAX_PAGE_TOKENS:
+        return False
+
+    informative_tokens = [t for t in token_list if len(t) > 2 and t not in STOPWORDS]
+    if len(informative_tokens) < MIN_INFO_TOKENS:
+        return False
+
+    if len(set(informative_tokens)) < MIN_UNIQUE_INFO_TOKENS:
+        return False
+
+    return True
+
+
+def is_html_like_response(raw_response):
+    if raw_response is None:
+        return False
+    headers = getattr(raw_response, "headers", None)
+    if not headers:
+        return True
+
+    content_type = headers.get("Content-Type", "") if hasattr(headers, "get") else ""
+    if not content_type:
+        return True
+
+    content_type = content_type.lower()
+    return ("text/html" in content_type) or ("application/xhtml+xml" in content_type)
 
 
 def tokenize(resp):
@@ -230,9 +311,17 @@ def extract_next_links(url, resp):
 
 
     for anchor in beautiful_soup.find_all('a', href = True): # anchor is the hyperlink tag
-        href = anchor['href'] # the attribute of anchor that has the actual link
-        full_url = urljoin(url, href).split('#')[0] # this makes the partial links like /page into full links
-        
+        href = anchor.get('href')
+        if not href:
+            continue
+        try:
+            full_url = urljoin(url, href)
+        except (TypeError, ValueError):
+            continue
+        full_url = full_url.split('#', 1)[0].strip()
+        if not full_url:
+            continue
+
         if is_valid(full_url):
             links.append(full_url)
 
@@ -255,22 +344,28 @@ def is_valid(url):
 
     # Manually blocked hosts.
     host = parsed.netloc.lower().split(":")[0]
-    if host in BLOCKED_HOSTS:
+    if is_blocked_host(host):
         return False
 
     # Hard URL-shape limits — single biggest trap killer.
-    if len(url) > 250:
+    if len(url) > MAX_URL_LENGTH:
         return False
     path_segs = [s for s in parsed.path.split("/") if s]
-    if len(path_segs) > 8:
+    if len(path_segs) > MAX_PATH_SEGMENTS:
+        return False
+    if any(len(seg) > MAX_SEGMENT_LENGTH for seg in path_segs):
         return False
     params = parse_qs(parsed.query)
-    if len(params) > 4:
+    if len(params) > MAX_QUERY_PARAMS:
         return False
 
     # Trap query keys (any match rejects).
     if any(k.lower() in TRAP_QUERY_KEYS for k in params):
         return False
+    if "page" in params:
+        for value in params["page"]:
+            if value.isdigit() and int(value) > MAX_QUERY_PAGE:
+                return False
 
     # Trap path fragments.
     path_lower = parsed.path.lower()
