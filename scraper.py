@@ -16,41 +16,6 @@ PREVIOUSLY_SEEN_CONTENT_HASHES = set()
 PAGES = 0
 SUBDOMAINS = {}
 
-ALLOWED_DOMAINS = ("ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu")
-
-DISALLOWED_EXT = re.compile(
-    r".*\.(css|js|bmp|gif|jpe?g|ico|png|tiff?|mid|mp2|mp3|mp4"
-    r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf|ps|eps|tex"
-    r"|ppt|pptx|doc|docx|xls|xlsx|names|data|dat|exe|bz2|tar"
-    r"|msi|bin|7z|psd|dmg|iso|epub|dll|cnf|tgz|sha1|thmx|mso"
-    r"|arff|rtf|jar|csv|rm|smil|wmv|swf|wma|zip|rar|gz|war"
-    r"|apk|img|sql|bak|svg|webp|woff2?|ttf|eot|ics|ppsx|mpg|pps|db|webm|flv|m4a)$"
-)
-
-# Query keys that typically generate trap variants (sort/filter/session/wiki actions/etc.).
-TRAP_QUERY_KEYS = {
-    "do", "rev", "action", "sectok",          # DokuWiki
-    "share", "replytocom", "redirect_to",      # WordPress
-    "tab", "sort", "order", "filter", "view",  # generic faceted nav
-    "ical", "outlook-ical", "eventdisplay",    # calendar exports
-    "format", "print", "version",
-    "session", "sid", "phpsessid",
-    "image", "media", "idx", "ns",             # DokuWiki media browsers
-    "add-to-cart", "afg",                       # storefront/forms
-}
-
-# Path fragments that point at machine-generated content with low value.
-TRAP_PATH_FRAGMENTS = (
-    "/files/", "/sampledata/",
-    "/raw/", "/diff/", "/blame/",
-    "/commit/", "/commits/", "/tree/", "/blob/",      # Git web UIs
-    "/attachment/", "/attachments/",
-    "/login", "/logout", "/signin", "/signout",
-    "/wp-login", "/wp-admin",
-    "/feed/", "/rss/", "/atom/",
-    "/trackback/", "/cgi-bin/",
-)
-
 STOPWORDS  = set([
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", 
     "any", "are", "aren't", "as", "at", "be", "because", "been", "before", 
@@ -74,18 +39,69 @@ STOPWORDS  = set([
     "you'll", "you're", "you've", "your", "yours", "yourself", "yourselves"
 ])
 
-def in_scope(netloc: str) -> bool:
+
+ALLOWED_DOMAINS = ("ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu")
+
+# Subdomains we've manually inspected and decided are traps / low-value.
+BLOCKED_HOSTS = {
+    "wics.ics.uci.edu",
+    "ngs.ics.uci.edu",
+    "seal.ics.uci.edu",
+}
+
+# File extensions we never want to fetch.
+DISALLOWED_EXT = re.compile(
+    r".*\.(css|js|bmp|gif|jpe?g|ico"
+    r"|png|tiff?|mid|mp2|mp3|mp4|svg|webm|flv|m4a|sql|db"
+    r"|wav|avi|mov|mpe?g|ram|m4v|mkv|ogg|ogv|pdf|ppsx|pps"
+    r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
+    r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
+    r"|epub|dll|cnf|tgz|sha1"
+    r"|thmx|mso|arff|rtf|jar|csv"
+    r"|rm|smil|wmv|swf|wma|zip|rar|gz|war|apk|img|bak"
+    r"|woff2?|ttf|eot|ics|mpg)$"
+)
+
+# Query keys that typically generate trap variants (sort/filter/session/wiki actions/etc.).
+TRAP_QUERY_KEYS = {
+    "do", "rev", "action", "sectok",          # DokuWiki
+    "share", "replytocom", "redirect_to",      # WordPress
+    "tab", "sort", "order", "filter", "view",  # generic faceted nav
+    "ical", "outlook-ical", "eventdisplay",    # calendar exports
+    "format", "print", "version",
+    "session", "sid", "phpsessid",
+    "image", "media", "idx", "ns",             # DokuWiki media browsers
+    "add-to-cart", "afg",
+}
+
+# Path fragments that point at machine-generated content with low value.
+TRAP_PATH_FRAGMENTS = (
+    "/files/", "/sampledata/",
+    "/raw/", "/diff/", "/blame/",
+    "/commit/", "/commits/", "/tree/", "/blob/",   # Git web UIs
+    "/attachment/", "/attachments/",
+    "/login", "/logout", "/signin", "/signout",
+    "/wp-login", "/wp-admin",
+    "/feed/", "/rss/", "/atom/",
+    "/trackback/", "/cgi-bin/",
+)
+
+
+def in_scope(netloc):
+    """Return True if netloc is exactly an allowed domain or a subdomain of one."""
     netloc = netloc.lower().split(":")[0]  # strip port if present
     return any(netloc == d or netloc.endswith("." + d) for d in ALLOWED_DOMAINS)
 
 
-def has_repeated_segments(path: str) -> bool:
-    """True if any path segment repeats 3+ times (e.g. /a/b/a/b/a/b/)."""
+def has_repeated_segments(path):
+    """True if any path segment repeats 3+ times (catches /a/b/a/b/a/b loops)."""
     segs = [s for s in path.split("/") if s]
     if not segs:
         return False
     counts = Counter(segs)
     return any(c >= 3 for c in counts.values())
+
+
 
 def scraper(url, resp):
     global PAGES
@@ -136,11 +152,11 @@ def exact_duplicate(resp):
         print(f"Error when checking duplicate: {e}" )
         return False
 
-def update_longest_page(url, len):
+def update_longest_page(url, length):
     global LONGEST_PAGE_LEN
     global LONGEST_PAGE
-    if len > LONGEST_PAGE_LEN:
-        LONGEST_PAGE_LEN = len
+    if length > LONGEST_PAGE_LEN:
+        LONGEST_PAGE_LEN = length
         LONGEST_PAGE = url
 
 def update_common_words(token_list):
@@ -223,7 +239,9 @@ def extract_next_links(url, resp):
 
     return links
     
-def is_valid(url: str) -> bool:
+def is_valid(url):
+    # Decide whether to crawl this url or not.
+    # If you decide to crawl it, return True; otherwise return False.
     try:
         parsed = urlparse(url)
     except (TypeError, ValueError):
@@ -235,31 +253,43 @@ def is_valid(url: str) -> bool:
     if not in_scope(parsed.netloc):
         return False
 
+    # Manually blocked hosts.
+    host = parsed.netloc.lower().split(":")[0]
+    if host in BLOCKED_HOSTS:
+        return False
+
     # Hard URL-shape limits — single biggest trap killer.
     if len(url) > 250:
         return False
     path_segs = [s for s in parsed.path.split("/") if s]
     if len(path_segs) > 8:
         return False
-
     params = parse_qs(parsed.query)
     if len(params) > 4:
         return False
 
-    # Specific trap signals.
+    # Trap query keys (any match rejects).
     if any(k.lower() in TRAP_QUERY_KEYS for k in params):
         return False
+
+    # Trap path fragments.
     path_lower = parsed.path.lower()
     if any(frag in path_lower for frag in TRAP_PATH_FRAGMENTS):
         return False
+
+    # Structural traps.
     if has_repeated_segments(parsed.path):
         return False
     if is_calendar_trap(parsed):
         return False
 
-    # Pagination explosion: /page/N/ where N is large.
+    # Pagination cap: /page/N where N is large.
     m = re.search(r"/page/(\d+)", path_lower)
     if m and int(m.group(1)) > 20:
+        return False
+
+    # Already visited.
+    if url in VISITED_URLS:
         return False
 
     # File-extension blacklist.
@@ -271,7 +301,6 @@ def is_valid(url: str) -> bool:
 
 def is_calendar_trap(parsed):
     path = parsed.path.lower()
-    query = parsed.query.lower()
 
     # Common calendar/event paths can generate unbounded monthly/day views.
     if "/events/" in path or "/calendar/" in path:
