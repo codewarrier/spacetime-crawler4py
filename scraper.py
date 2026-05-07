@@ -16,6 +16,40 @@ PREVIOUSLY_SEEN_CONTENT_HASHES = set()
 PAGES = 0
 SUBDOMAINS = {}
 
+ALLOWED_DOMAINS = ("ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu")
+
+DISALLOWED_EXT = re.compile(
+    r".*\.(css|js|bmp|gif|jpe?g|ico|png|tiff?|mid|mp2|mp3|mp4"
+    r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf|ps|eps|tex"
+    r"|ppt|pptx|doc|docx|xls|xlsx|names|data|dat|exe|bz2|tar"
+    r"|msi|bin|7z|psd|dmg|iso|epub|dll|cnf|tgz|sha1|thmx|mso"
+    r"|arff|rtf|jar|csv|rm|smil|wmv|swf|wma|zip|rar|gz|war"
+    r"|apk|img|sql|bak|svg|webp|woff2?|ttf|eot|ics|ppsx|mpg|pps|db|webm|flv|m4a)$"
+)
+
+# Query keys that typically generate trap variants (sort/filter/session/wiki actions/etc.).
+TRAP_QUERY_KEYS = {
+    "do", "rev", "action", "sectok",          # DokuWiki
+    "share", "replytocom", "redirect_to",      # WordPress
+    "tab", "sort", "order", "filter", "view",  # generic faceted nav
+    "ical", "outlook-ical", "eventdisplay",    # calendar exports
+    "format", "print", "version",
+    "session", "sid", "phpsessid",
+    "image", "media", "idx", "ns",             # DokuWiki media browsers
+    "add-to-cart", "afg",                       # storefront/forms
+}
+
+# Path fragments that point at machine-generated content with low value.
+TRAP_PATH_FRAGMENTS = (
+    "/files/", "/sampledata/",
+    "/raw/", "/diff/", "/blame/",
+    "/commit/", "/commits/", "/tree/", "/blob/",      # Git web UIs
+    "/attachment/", "/attachments/",
+    "/login", "/logout", "/signin", "/signout",
+    "/wp-login", "/wp-admin",
+    "/feed/", "/rss/", "/atom/",
+    "/trackback/", "/cgi-bin/",
+)
 
 STOPWORDS  = set([
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", 
@@ -40,7 +74,18 @@ STOPWORDS  = set([
     "you'll", "you're", "you've", "your", "yours", "yourself", "yourselves"
 ])
 
+def in_scope(netloc: str) -> bool:
+    netloc = netloc.lower().split(":")[0]  # strip port if present
+    return any(netloc == d or netloc.endswith("." + d) for d in ALLOWED_DOMAINS)
 
+
+def has_repeated_segments(path: str) -> bool:
+    """True if any path segment repeats 3+ times (e.g. /a/b/a/b/a/b/)."""
+    segs = [s for s in path.split("/") if s]
+    if not segs:
+        return False
+    counts = Counter(segs)
+    return any(c >= 3 for c in counts.values())
 
 def scraper(url, resp):
     global PAGES
@@ -178,53 +223,50 @@ def extract_next_links(url, resp):
 
     return links
     
-def is_valid(url):
-    # Decide whether to crawl this url or not. 
-    # If you decide to crawl it, return True; otherwise return False.
-    # There are already some conditions that return False.
+def is_valid(url: str) -> bool:
     try:
-
         parsed = urlparse(url)
-        netloc = parsed.netloc
-        path = parsed.path
-        query = parsed.query
+    except (TypeError, ValueError):
+        return False
 
-        allowed_domains = (".ics.uci.edu", ".cs.uci.edu", ".informatics.uci.edu", ".stat.uci.edu")
-        if not netloc.endswith(allowed_domains):
-            return False
+    # Scheme + scope.
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if not in_scope(parsed.netloc):
+        return False
 
-        blocked_subdomains = ("wics.ics.uci.edu", "ngs.ics.uci.edu", "seal.ics.uci.edu")
-        if any(sub in netloc for sub in blocked_subdomains):
-            return False
-        
-        if parsed.scheme not in set(["http", "https"]):
-            return False
+    # Hard URL-shape limits — single biggest trap killer.
+    if len(url) > 250:
+        return False
+    path_segs = [s for s in parsed.path.split("/") if s]
+    if len(path_segs) > 8:
+        return False
 
-        
-        if any(action in query for action in ["do=", "rev=", "action=", "sectok=", "share="]):
-            return False
+    params = parse_qs(parsed.query)
+    if len(params) > 4:
+        return False
 
-        if is_calendar_trap(parsed):
-            return False
+    # Specific trap signals.
+    if any(k.lower() in TRAP_QUERY_KEYS for k in params):
+        return False
+    path_lower = parsed.path.lower()
+    if any(frag in path_lower for frag in TRAP_PATH_FRAGMENTS):
+        return False
+    if has_repeated_segments(parsed.path):
+        return False
+    if is_calendar_trap(parsed):
+        return False
 
-        if re.match(r"^.*?(/.+?/).*?\1.*$|^.*?/(.+?/)\2.*$", path):
-            return False
+    # Pagination explosion: /page/N/ where N is large.
+    m = re.search(r"/page/(\d+)", path_lower)
+    if m and int(m.group(1)) > 20:
+        return False
 
-        if url in VISITED_URLS:
-            return False
+    # File-extension blacklist.
+    if DISALLOWED_EXT.match(path_lower):
+        return False
 
-        return not re.match(
-            r".*\.(css|js|bmp|gif|jpe?g|ico"
-            + r"|png|tiff?|mid|mp2|mp3|mp4|svg|webm|flv|m4a|sql|db"
-            + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf|mpg|ppsx|pps"
-            + r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
-            + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
-            + r"|epub|dll|cnf|tgz|sha1"
-            + r"|thmx|mso|arff|rtf|jar|csv"
-            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
-    except TypeError:
-        print ("TypeError for ", parsed)
-        raise
+    return True
 
 
 def is_calendar_trap(parsed):
