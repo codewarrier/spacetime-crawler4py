@@ -236,23 +236,6 @@ def is_calendar_trap(parsed):
     if re.search(r"/(19|20)\d{2}/\d{1,2}(/\d{1,2})?(/|$)", path):
         return True
 
-    params = parse_qs(parsed.query)
-    calendar_keys = {
-        "year", "month", "day", "date", "time", "calendar",
-        "startdate", "enddate", "start", "end", "view", "m", "y"
-    }
-
-    # Multiple calendar-ish parameters together are a strong trap signal.
-    matched_keys = sum(1 for key in params if key.lower() in calendar_keys)
-    if matched_keys >= 2:
-        return True
-
-    # Date values in query parameters are another common trap pattern.
-    for values in params.values():
-        for value in values:
-            if re.search(r"(19|20)\d{2}[-/]\d{1,2}([-/]\d{1,2})?", value):
-                return True
-
     return False
 
 def print_report():
