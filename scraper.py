@@ -5,8 +5,6 @@ from bs4 import BeautifulSoup
 from collections import Counter, defaultdict
 
 
-
-
 LONGEST_PAGE_LEN = -1
 LONGEST_PAGE = ""
 COMMON_WORDS = defaultdict(int)
@@ -102,7 +100,7 @@ def update_longest_page(url, len):
 
 def update_common_words(token_list):
     for token in token_list:
-        if token not in STOPWORDS:
+        if len(token) > 2 and token not in STOPWORDS:
             COMMON_WORDS[token] += 1
 
 
@@ -113,7 +111,7 @@ def tokenize(resp):
 
         currWord = ""
         for char in bs_parser.get_text():
-            if char.isalnum() and char.isascii():
+            if char.isalpha():
                 currWord += char
             else:
                 if currWord:
@@ -143,8 +141,7 @@ def extract_next_links(url, resp):
     global VISITED_URLS
 
     links = []
-    if url in VISITED_URLS:
-        return links
+
     
     VISITED_URLS.add(url)
 
@@ -193,15 +190,18 @@ def is_valid(url):
         query = parsed.query
 
         allowed_domains = (".ics.uci.edu", ".cs.uci.edu", ".informatics.uci.edu", ".stat.uci.edu")
-        if not any(domain in netloc for domain in allowed_domains):
+        if not netloc.endswith(allowed_domains):
             return False
 
+        blocked_subdomains = ("wics.ics.uci.edu", "ngs.ics.uci.edu", "seal.ics.uci.edu")
+        if any(sub in netloc for sub in blocked_subdomains):
+            return False
         
         if parsed.scheme not in set(["http", "https"]):
             return False
 
         
-        if any(action in query for action in ["do=", "rev=", "action=", "sectok="]):
+        if any(action in query for action in ["do=", "rev=", "action=", "sectok=", "share="]):
             return False
 
         if is_calendar_trap(parsed):
@@ -210,10 +210,13 @@ def is_valid(url):
         if re.match(r"^.*?(/.+?/).*?\1.*$|^.*?/(.+?/)\2.*$", path):
             return False
 
+        if url in VISITED_URLS:
+            return False
+
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
-            + r"|png|tiff?|mid|mp2|mp3|mp4"
-            + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
+            + r"|png|tiff?|mid|mp2|mp3|mp4|svg|webm|flv|m4a|sql|db"
+            + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf|mpg|ppsx|pps"
             + r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
