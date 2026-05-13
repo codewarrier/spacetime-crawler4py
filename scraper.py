@@ -106,20 +106,31 @@ TRAP_PATH_FRAGMENTS = (
     "/ca/rules/",
 )
 
-
+"""
+Checks if a host (ignoring port) matches or is a subdomain of ALLOWED_DOMAINS.
+Example: 'api.example.com' returns True if 'example.com' is allowed.
+"""
 def in_scope(netloc):
     """Return True if netloc is exactly an allowed domain or a subdomain of one."""
     host = netloc.lower().split(":")[0]  # strip port if present
     return any(host == domain or host.endswith("." + domain) for domain in ALLOWED_DOMAINS)
 
 
+
+"""
+Checks if a hostname (ignoring port) is in the BLOCKED_HOSTS list 
+or matches a forbidden pattern in BLOCKED_HOST_SUFFIXES.
+"""
 def is_blocked_host(host):
     host = host.lower().split(":")[0]
     if host in BLOCKED_HOSTS:
         return True
     return any(host.endswith(suffix) for suffix in BLOCKED_HOST_SUFFIXES)
 
-
+"""
+    Detects infinite loops in a URL path by checking if any single segment 
+    or sequence of segments repeats three or more times consecutively.
+    """
 def has_repeated_segments(path):
     """True if any path segment repeats 3+ times (catches /a/b/a/b/a/b loops)."""
     segs = [s for s in path.split("/") if s]
@@ -140,7 +151,10 @@ def has_repeated_segments(path):
     return False
 
 
-
+"""
+    Validates and processes page content by filtering for size, type, and uniqueness.
+    Updates global analytics for informative pages and returns all valid outgoing links.
+"""
 def scraper(url, resp):
     global PAGES
 
@@ -178,7 +192,10 @@ def scraper(url, resp):
     links = extract_next_links(url, resp)
     return [link for link in links if is_valid(link)]
 
-
+"""
+    Identifies duplicate content by stripping boilerplate (scripts, nav, etc.) 
+    and comparing a SHA-256 hash of the remaining text against seen pages.
+    """
 def exact_duplicate(resp):
     try:
         soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
@@ -202,6 +219,12 @@ def exact_duplicate(resp):
         print(f"Error when checking duplicate: {e}" )
         return False
 
+
+"""
+Updates global trackers for the longest page found (by word count) and
+maintains a frequency map of non-stopword tokens longer than two characters.
+"""
+
 def update_longest_page(url, length):
     global LONGEST_PAGE_LEN
     global LONGEST_PAGE
@@ -209,12 +232,18 @@ def update_longest_page(url, length):
         LONGEST_PAGE_LEN = length
         LONGEST_PAGE = url
 
+
+
 def update_common_words(token_list):
     for token in token_list:
         if len(token) > 2 and token not in STOPWORDS:
             COMMON_WORDS[token] += 1
 
 
+"""
+Filters out "thin" or "junk" pages by ensuring the word count, 
+non-stopword count, and unique token count fall within specific threshold ranges.
+"""
 def has_informative_content(token_list):
     if len(token_list) < MIN_INFO_TOKENS:
         return False
@@ -230,7 +259,10 @@ def has_informative_content(token_list):
 
     return True
 
-
+"""
+Determines if a response is a web page by checking if the 
+Content-Type header contains text/html or application/xhtml+xml.
+"""
 def is_html_like_response(raw_response):
     if raw_response is None:
         return False
@@ -245,7 +277,10 @@ def is_html_like_response(raw_response):
     content_type = content_type.lower()
     return ("text/html" in content_type) or ("application/xhtml+xml" in content_type)
 
-
+"""
+Extracts all alphabetic text from a page using BeautifulSoup,
+ converting it into a lowercase list of individual words.
+"""
 def tokenize(resp):
     try:
         bs_parser = BeautifulSoup(resp.raw_response.content, features='html.parser')
@@ -268,7 +303,10 @@ def tokenize(resp):
     
 
 
-
+"""
+Parses a page for all <a> tags, converts relative paths to absolute URLs,
+ removes fragments, and filters out blacklisted directories or invalid links.
+"""
 def extract_next_links(url, resp):
     # Implementation required.
     # url: the URL that was used to get the page
@@ -328,6 +366,11 @@ def extract_next_links(url, resp):
 
     return links
     
+
+"""
+A comprehensive safety gate that rejects URLs based on scheme, scope, length, depth,
+ repeated segments, query parameters, and known crawler traps.
+"""    
 def is_valid(url):
     # Decide whether to crawl this url or not.
     # If you decide to crawl it, return True; otherwise return False.
@@ -389,7 +432,10 @@ def is_valid(url):
 
     return True
 
-
+"""
+Identifies infinite-scrolling calendar or event pages by
+ detecting date-based patterns or specific keywords in the URL path.
+"""
 def is_calendar_trap(parsed):
     path = parsed.path.lower()
 
@@ -402,6 +448,11 @@ def is_calendar_trap(parsed):
 
     return False
 
+
+"""
+Outputs a summary of crawl progress, including total unique pages, 
+the longest page discovered, top 50 common words, and page counts per subdomain.
+"""
 def print_report():
 
     print(f"unique pgs {PAGES}")
